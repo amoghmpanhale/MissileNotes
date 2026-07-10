@@ -39,7 +39,8 @@
         {
           "cameraPermission": "Allow MissileNotes to use the camera to scan pages."
         }
-      ]
+      ],
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true

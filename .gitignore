@@ -1,0 +1,19 @@
+# Claude Code / AI assistant — never commit
+.claude/
+CLAUDE.local.md
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Scan images & photos — large, personal, not for the repo.
+# The printable ArUco marker is the exception (see !aruco below).
+experiments/data/*
+experiments/data_png/
+!experiments/data/aruco.png
+!experiments/data/aruco.svg

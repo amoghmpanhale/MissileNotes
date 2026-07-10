@@ -1,0 +1,6 @@
+{
+  "encoder": "mobilenet_v2",
+  "dice": 0.9723,
+  "size_mb": 17.8,
+  "inference_ms": 12.53
+}

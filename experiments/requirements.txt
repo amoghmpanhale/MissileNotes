@@ -1,0 +1,7 @@
+numpy
+opencv-contrib-python
+torch
+segmentation-models-pytorch
+Pillow
+pillow-heif
+matplotlib

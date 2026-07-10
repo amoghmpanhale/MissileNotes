@@ -27,8 +27,11 @@ function manifestPath(id: string): string {
   return `${docDir(id)}manifest.json`;
 }
 
+// ponytail: Hermes has no global crypto; Math.random ids are fine for local doc ids
 function newId(): string {
-  return globalThis.crypto.randomUUID();
+  const c = (globalThis as any).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
 }
 
 async function ensureRoot(): Promise<void> {

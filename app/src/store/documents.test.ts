@@ -183,3 +183,26 @@ describe('deleteDoc', () => {
     expect(await getDoc(keep.id)).toBeTruthy();
   });
 });
+
+describe('newId fallback (Hermes without crypto)', () => {
+  it('generates unique ids when globalThis.crypto is unavailable', async () => {
+    const originalCrypto = (globalThis as any).crypto;
+    try {
+      (globalThis as any).crypto = undefined;
+
+      const doc = await createDoc('Fallback Test');
+      expect(doc.id).toBeTruthy();
+      expect(typeof doc.id).toBe('string');
+
+      // Verify we can still list and retrieve the doc
+      const list = await listDocs();
+      expect(list).toHaveLength(1);
+      expect(list[0].id).toBe(doc.id);
+
+      const fetched = await getDoc(doc.id);
+      expect(fetched.id).toBe(doc.id);
+    } finally {
+      (globalThis as any).crypto = originalCrypto;
+    }
+  });
+});

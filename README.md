@@ -1,6 +1,4 @@
-# rocket-killer
-
-Rocketbooks suck. This is better.
+# MissileNotes
 
 A phone app (iPhone + Android) that turns any printed page into a clean,
 flat, cloud-saved scan — you just print an [ArUco](https://en.wikipedia.org/wiki/ArUco)

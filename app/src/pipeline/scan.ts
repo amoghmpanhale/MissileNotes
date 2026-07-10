@@ -47,6 +47,7 @@ import {
 // Re-exported for callers/tests that only need the geometry (see geometry.ts
 // for the actual implementations and pure-Node unit tests in scan.test.ts).
 export { orderCorners };
+export type { Point };
 
 /** Port of page_quad()'s hull->approxPolyDP sweep, given an already-built
  * convex hull. Split out from pageQuadFromContourPoints so the sweep (which
@@ -318,7 +319,15 @@ async function getModel(): Promise<TensorflowModel> {
   return cachedModel;
 }
 
-async function runPipeline(photoUri: string): Promise<string> {
+/**
+ * Runs everything through page_quad() (upright -> model-frame mask -> island
+ * -> quad) but stops short of warping. `quad`'s coordinates are in the
+ * *upright* frame — the same frame experiments/export_goldens.py's
+ * quad.json goldens are recorded in — so this is what the /parity screen
+ * calls to diff against the goldens without needing to decode the warped
+ * output back into quad coordinates.
+ */
+async function computeUprightQuad(photoUri: string): Promise<{ upright: Mat; quad: Point[] }> {
   const FileSystem = await import('expo-file-system/legacy');
   const base64 = await FileSystem.readAsStringAsync(photoUri, { encoding: 'base64' });
   const src = OpenCV.base64ToMat(base64);
@@ -346,6 +355,13 @@ async function runPipeline(photoUri: string): Promise<string> {
   const quad = pageQuad(island, postMarker.corners);
   if (!quad) throw new Error('no page quad found');
 
+  return { upright, quad };
+}
+
+async function runPipeline(photoUri: string): Promise<string> {
+  const FileSystem = await import('expo-file-system/legacy');
+  const { upright, quad } = await computeUprightQuad(photoUri);
+
   const warped = warpQuad(upright, quad);
   const gray = OpenCV.createObject(ObjectType.Mat, 0, 0, DataTypes.CV_8U);
   OpenCV.invoke('cvtColor', warped, gray, ColorConversionCodes.COLOR_BGR2GRAY);
@@ -355,6 +371,24 @@ async function runPipeline(photoUri: string): Promise<string> {
   )}.jpg`;
   OpenCV.saveMatToFile(gray, outPath, 'jpeg', 0.92);
   return outPath;
+}
+
+/**
+ * Dev/parity-only entry point: returns the detected page quad's 4 corners in
+ * the upright frame (same frame as experiments/export_goldens.py's
+ * `<name>.quad.json`), or null on any failure. Used by the /parity screen to
+ * diff against the golden quads — see task-2.2-report.md for exact steps.
+ */
+export async function detectPageQuadForParity(photoUri: string): Promise<Point[] | null> {
+  try {
+    const { quad } = await computeUprightQuad(photoUri);
+    return quad;
+  } catch (err) {
+    console.warn('[pipeline] detectPageQuadForParity failed:', err);
+    return null;
+  } finally {
+    OpenCV.clearBuffers();
+  }
 }
 
 /**

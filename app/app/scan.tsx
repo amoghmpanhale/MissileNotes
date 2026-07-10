@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Image,
   Modal,
   Pressable,
@@ -12,6 +13,7 @@ import {
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { router, useNavigation } from 'expo-router';
 
+import { processScan } from '@/src/pipeline/scan';
 import { addPage, createDoc, deleteDoc, updateDoc } from '@/src/store/documents';
 
 function defaultTitle(): string {
@@ -26,6 +28,10 @@ export default function ScanScreen() {
   const [docId, setDocId] = useState<string | null>(null);
   const [pages, setPages] = useState<string[]>([]);
   const [capturing, setCapturing] = useState(false);
+  // True while processScan() (marker detect -> segment -> warp) runs on a
+  // just-captured photo. Distinct from `capturing` (shutter-to-photo) so the
+  // UI can show "processing" during the (slower) CV/ML step specifically.
+  const [processing, setProcessing] = useState(false);
   const [titleModalVisible, setTitleModalVisible] = useState(false);
   const [titleInput, setTitleInput] = useState('');
 
@@ -71,7 +77,13 @@ export default function ScanScreen() {
         setDocId(id);
       }
 
-      const updated = await addPage(id, photo.uri);
+      // processScan() never throws — on any CV/ML failure (no marker, no
+      // quad, inference error) it resolves to the original photo.uri, so a
+      // scan is never blocked on the pipeline.
+      setProcessing(true);
+      const scannedUri = await processScan(photo.uri).finally(() => setProcessing(false));
+
+      const updated = await addPage(id, scannedUri);
       setPages(updated.pages);
     } finally {
       capturingRef.current = false;
@@ -163,6 +175,13 @@ export default function ScanScreen() {
           disabled={capturing}
         />
       </View>
+
+      {processing && (
+        <View style={styles.processingOverlay} pointerEvents="none">
+          <ActivityIndicator size="large" color="#fff" />
+          <Text style={styles.processingText}>Flattening scan…</Text>
+        </View>
+      )}
 
       <Modal
         visible={titleModalVisible}
@@ -297,6 +316,22 @@ const styles = StyleSheet.create({
   },
   shutterButtonDisabled: {
     opacity: 0.5,
+  },
+  processingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  processingText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+    marginTop: 12,
   },
   modalBackdrop: {
     flex: 1,

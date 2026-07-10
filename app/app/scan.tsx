@@ -39,16 +39,21 @@ export default function ScanScreen() {
   // beforeRemove listener below discards the in-progress doc on the way out.
   const savedRef = useRef(false);
 
+  // Ref to track current docId for the beforeRemove listener, avoiding
+  // stale-closure bugs when navigation events fire between setDocId and
+  // the effect re-running.
+  const docIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     const unsubscribe = navigation.addListener('beforeRemove', () => {
-      if (!savedRef.current && docId) {
-        deleteDoc(docId).catch((err) => {
+      if (!savedRef.current && docIdRef.current) {
+        deleteDoc(docIdRef.current).catch((err) => {
           console.warn('Failed to discard in-progress scan', err);
         });
       }
     });
     return unsubscribe;
-  }, [navigation, docId]);
+  }, [navigation]);
 
   async function handleCapture() {
     if (!cameraRef.current || capturingRef.current) return;
@@ -62,6 +67,7 @@ export default function ScanScreen() {
       if (!id) {
         const doc = await createDoc(defaultTitle());
         id = doc.id;
+        docIdRef.current = id;
         setDocId(id);
       }
 

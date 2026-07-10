@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Image,
   Modal,
@@ -10,7 +10,7 @@ import {
   View,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { router } from 'expo-router';
+import { router, useNavigation } from 'expo-router';
 
 import { addPage, createDoc, deleteDoc, updateDoc } from '@/src/store/documents';
 
@@ -21,6 +21,7 @@ function defaultTitle(): string {
 export default function ScanScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
+  const navigation = useNavigation();
 
   const [docId, setDocId] = useState<string | null>(null);
   const [pages, setPages] = useState<string[]>([]);
@@ -28,8 +29,30 @@ export default function ScanScreen() {
   const [titleModalVisible, setTitleModalVisible] = useState(false);
   const [titleInput, setTitleInput] = useState('');
 
+  // Synchronous gate for double-capture: `capturing` state only blocks the
+  // Pressable after a re-render, so two taps in the same JS tick could both
+  // pass a state-only check. This ref is set/reset immediately, no await gap.
+  const capturingRef = useRef(false);
+
+  // Set true only by the committed "Done/save" path. Any other exit
+  // (hardware back, swipe-back, the Close button) leaves this false, and the
+  // beforeRemove listener below discards the in-progress doc on the way out.
+  const savedRef = useRef(false);
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', () => {
+      if (!savedRef.current && docId) {
+        deleteDoc(docId).catch((err) => {
+          console.warn('Failed to discard in-progress scan', err);
+        });
+      }
+    });
+    return unsubscribe;
+  }, [navigation, docId]);
+
   async function handleCapture() {
-    if (!cameraRef.current || capturing) return;
+    if (!cameraRef.current || capturingRef.current) return;
+    capturingRef.current = true;
     setCapturing(true);
     try {
       const photo = await cameraRef.current.takePictureAsync();
@@ -45,6 +68,7 @@ export default function ScanScreen() {
       const updated = await addPage(id, photo.uri);
       setPages(updated.pages);
     } finally {
+      capturingRef.current = false;
       setCapturing(false);
     }
   }
@@ -59,17 +83,25 @@ export default function ScanScreen() {
   }
 
   async function handleConfirmTitle() {
+    // Mark this as the committed save path before anything async so the
+    // beforeRemove listener (fired by the router.back() below) doesn't treat
+    // this exit as an abandonment and delete the doc.
+    savedRef.current = true;
     if (docId) {
-      await updateDoc(docId, { title: titleInput.trim() || defaultTitle() });
+      try {
+        await updateDoc(docId, { title: titleInput.trim() || defaultTitle() });
+      } catch (err) {
+        console.warn('Failed to save scan title', err);
+      }
     }
     setTitleModalVisible(false);
     router.back();
   }
 
-  async function handleCancel() {
-    if (docId) {
-      await deleteDoc(docId);
-    }
+  function handleCancel() {
+    // No delete here: navigation's beforeRemove listener (registered above)
+    // handles discarding the in-progress doc for every non-save exit,
+    // including this button, hardware back, and swipe-back alike.
     router.back();
   }
 

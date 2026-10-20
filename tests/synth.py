@@ -28,6 +28,11 @@ class SyntheticPage:
     rotation: int
     tilt: float
     page_size: tuple[int, int]  # (width, height) of the paper
+    # Page-space ground truth, only filled when ``annotate=True`` so existing
+    # callers see exactly the same images and mask as before.
+    rule_mask: np.ndarray | None = None  # bool, printed rules + red margin
+    ink_mask: np.ndarray | None = None  # bool, handwriting strokes
+    marker_mask: np.ndarray | None = None  # bool, marker tile (incl. white border)
 
 
 def synthetic_page(
@@ -38,6 +43,8 @@ def synthetic_page(
     with_marker: bool = True,
     contaminate: bool = True,
     perspective: float | None = None,
+    shadow: float = 0.0,
+    annotate: bool = False,
 ) -> SyntheticPage:
     """Build one synthetic photo.
 
@@ -45,12 +52,20 @@ def synthetic_page(
     in-plane rotation (degrees) left for the ruled-line refinement to find.
     ``perspective`` is the approximate keystone, as a fraction of opposite edge
     length (0.2 gives the ~0.8 ratio of a handheld angled shot). ``None`` keeps
-    the historical, nearly frontal ~3-4% skew.
+    the historical, nearly frontal ~3-4% skew. ``shadow`` (0..1) darkens the
+    left ~55% of the page by that fraction with a hard edge, for testing
+    illumination correction. ``annotate`` returns page-space rule/ink/marker
+    masks; both new arguments default to off so historical outputs are
+    unchanged.
     """
     if rotation % 90 != 0:
         raise ValueError("rotation must be a multiple of 90")
+    if not 0.0 <= shadow < 1.0:
+        raise ValueError("shadow must be in [0, 1)")
 
-    page = _render_page(seed, marker_id, with_marker)
+    page, rule_mask, ink_mask, marker_mask = _render_page(
+        seed, marker_id, with_marker, shadow, annotate
+    )
     src = np.array(
         [[0, 0], [PAGE_W - 1, 0], [PAGE_W - 1, PAGE_H - 1], [0, PAGE_H - 1]],
         np.float64,
@@ -87,10 +102,19 @@ def synthetic_page(
         rotation=rotation,
         tilt=float(tilt),
         page_size=(PAGE_W, PAGE_H),
+        rule_mask=rule_mask,
+        ink_mask=ink_mask,
+        marker_mask=marker_mask,
     )
 
 
-def _render_page(seed: int, marker_id: int, with_marker: bool) -> np.ndarray:
+def _render_page(
+    seed: int,
+    marker_id: int,
+    with_marker: bool,
+    shadow: float = 0.0,
+    annotate: bool = False,
+) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
     rng = np.random.default_rng(seed)
     page = np.empty((PAGE_H, PAGE_W, 3), np.uint8)
     page[:] = (246, 245, 240)
@@ -100,9 +124,17 @@ def _render_page(seed: int, marker_id: int, with_marker: bool) -> np.ndarray:
         255,
     ).astype(np.uint8)
 
+    rule_mask = np.zeros((PAGE_H, PAGE_W), np.uint8) if annotate else None
+    ink_mask = np.zeros((PAGE_H, PAGE_W), np.uint8) if annotate else None
+    marker_mask = np.zeros((PAGE_H, PAGE_W), np.uint8) if annotate else None
+
     margin_x = 72
     for y in range(96, PAGE_H - 24, 34):
         cv2.line(page, (20, y), (PAGE_W - 20, y), (120, 165, 205), 2, cv2.LINE_AA)
+        if annotate:
+            cv2.line(
+                rule_mask, (20, y), (PAGE_W - 20, y), 1, 2, cv2.LINE_AA
+            )
     cv2.line(
         page,
         (margin_x, 20),
@@ -111,6 +143,15 @@ def _render_page(seed: int, marker_id: int, with_marker: bool) -> np.ndarray:
         2,
         cv2.LINE_AA,
     )
+    if annotate:
+        cv2.line(
+            rule_mask,
+            (margin_x, 20),
+            (margin_x, PAGE_H - 20),
+            1,
+            2,
+            cv2.LINE_AA,
+        )
 
     ink = (42, 45, 55)
     for _ in range(7):
@@ -125,6 +166,10 @@ def _render_page(seed: int, marker_id: int, with_marker: bool) -> np.ndarray:
         cv2.polylines(
             page, [np.array(pts, np.int32)], False, ink, 3, cv2.LINE_AA
         )
+        if annotate:
+            cv2.polylines(
+                ink_mask, [np.array(pts, np.int32)], False, 1, 3, cv2.LINE_AA
+            )
 
     if with_marker:
         tile = _marker_tile(marker_id)
@@ -134,7 +179,23 @@ def _render_page(seed: int, marker_id: int, with_marker: bool) -> np.ndarray:
         page[y0 : y0 + th, x0 : x0 + tw] = cv2.cvtColor(
             tile, cv2.COLOR_GRAY2RGB
         )
-    return page
+        if annotate:
+            marker_mask[y0 : y0 + th, x0 : x0 + tw] = 1
+
+    if shadow > 0.0:
+        # Hard-edged cast shadow over the left half. It is applied in page
+        # space so the flat warp contains the same shadow after resampling.
+        edge = int(PAGE_W * 0.55)
+        shaded = page.astype(np.float32)
+        shaded[:, :edge] *= 1.0 - shadow
+        page = np.clip(shaded, 0, 255).astype(np.uint8)
+
+    masks = (
+        rule_mask.astype(bool) if annotate else None,
+        ink_mask.astype(bool) if annotate else None,
+        marker_mask.astype(bool) if annotate else None,
+    )
+    return page, *masks
 
 
 def _marker_tile(marker_id: int) -> np.ndarray:

@@ -11,7 +11,8 @@ Stage order and frames:
    (marker down, page up). ``ScanResult.rotation`` records this CCW angle.
 2. Rotate another 90 degrees clockwise into the horizontal model's frame,
    predict, then undo the rotation to get a mask in the upright frame.
-3. Recover the page quad, warp it upright, and binarize.
+3. Recover the page quad, warp it upright, and binarize. Optional stages can
+   flatten lighting first and remove printed rules afterwards.
 4. Express the quad back in the original photo's coordinates so callers can
    overlay it on the photo they passed in.
 """
@@ -24,7 +25,8 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
-from .enhance import binarize
+from .enhance import binarize, normalize_illumination
+from .enhance import remove_rules as remove_rule_lines
 from .geometry import page_quad, warp
 from .marker import (
     Marker,
@@ -66,12 +68,19 @@ def scan(
     *,
     threshold: float = 0.5,
     binarize_output: bool = True,
+    normalize: bool = False,
+    remove_rules: bool = False,
 ) -> ScanResult:
     """Scan one RGB photo. Never raises for a bad photo.
 
     Missing markers, pages the model cannot find, and unusable geometry all
     return ``ok=False`` with a human-readable reason. Only programmer errors
     (wrong array shape/dtype) raise.
+
+    ``normalize`` flattens uneven lighting and shadows before binarizing.
+    ``remove_rules`` clears printed ruled/margin lines after binarizing; it is
+    ignored when ``binarize_output`` is false. Both default to off so the
+    default output matches the historical pipeline exactly.
     """
     img_rgb = _validate(img_rgb)
     timings: dict[str, float] = {}
@@ -139,9 +148,20 @@ def scan(
 
     scan_image = None
     if binarize_output:
+        flat_gray = cv2.cvtColor(flat_rgb, cv2.COLOR_RGB2GRAY)
+        if normalize:
+            start = time.perf_counter()
+            flat_gray = normalize_illumination(flat_gray)
+            timings["normalize"] = _elapsed_ms(start)
+
         start = time.perf_counter()
-        scan_image = binarize(cv2.cvtColor(flat_rgb, cv2.COLOR_RGB2GRAY))
+        scan_image = binarize(flat_gray)
         timings["binarize"] = _elapsed_ms(start)
+
+        if remove_rules:
+            start = time.perf_counter()
+            scan_image = remove_rule_lines(flat_rgb, scan_image)
+            timings["remove_rules"] = _elapsed_ms(start)
 
     return ScanResult(
         True,

@@ -19,6 +19,9 @@ torch = ["torch", "segmentation-models-pytorch"]
 tflite = ["ai-edge-litert"]
 dev = ["pytest"]
 
+[project.scripts]
+missilenotes = "missilenotes.__main__:main"
+
 [tool.setuptools.packages.find]
 include = ["missilenotes*"]
 

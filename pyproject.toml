@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "missilenotes"
+version = "0.1.0"
+description = "Document scanning pipeline: ArUco marker, page geometry, binarization"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "opencv-contrib-python",
+    "Pillow",
+    "pillow-heif",
+]
+
+[project.optional-dependencies]
+torch = ["torch", "segmentation-models-pytorch"]
+tflite = ["ai-edge-litert"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["missilenotes*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

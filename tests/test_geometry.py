@@ -8,6 +8,9 @@ from tests.synth import PAGE_H, PAGE_W, synthetic_page
 
 ROTATIONS = [0, 90, 180, 270]
 TILTS = [-24.0, -12.0, 0.0, 12.0, 24.0]
+# 0.2 keystone means opposite edges differ by ~20% (ratio ~0.8), like a phone
+# held at an angle; both axes converge in synthetic_page.
+KEYSTONES = [0.0, 0.2]
 
 
 def _upright(synth):
@@ -33,9 +36,15 @@ def _corner_error(actual, expected):
 
 
 @pytest.mark.parametrize("rotation", ROTATIONS)
+@pytest.mark.parametrize("keystone", KEYSTONES)
 @pytest.mark.parametrize("tilt", TILTS)
-def test_page_quad_recovered(rotation, tilt):
-    synth = synthetic_page(rotation=rotation, tilt=tilt, seed=rotation + int(tilt) + 40)
+def test_page_quad_recovered(rotation, keystone, tilt):
+    synth = synthetic_page(
+        rotation=rotation,
+        tilt=tilt,
+        seed=rotation + int(tilt) + 40,
+        perspective=keystone,
+    )
     image, gray, mask, quad, marker = _upright(synth)
 
     result = page_quad(mask, marker, gray)
@@ -46,9 +55,14 @@ def test_page_quad_recovered(rotation, tilt):
     assert error <= 0.02 * diag, f"{error:.1f}px > 2% of {diag:.1f}px"
 
 
-def test_spurious_blob_and_holes_do_not_change_quad():
-    clean = synthetic_page(rotation=0, tilt=10, seed=11, contaminate=False)
-    dirty = synthetic_page(rotation=0, tilt=10, seed=11, contaminate=True)
+@pytest.mark.parametrize("keystone", KEYSTONES)
+def test_spurious_blob_and_holes_do_not_change_quad(keystone):
+    clean = synthetic_page(
+        rotation=0, tilt=10, seed=11, contaminate=False, perspective=keystone
+    )
+    dirty = synthetic_page(
+        rotation=0, tilt=10, seed=11, contaminate=True, perspective=keystone
+    )
 
     # Same rendering: only the model-like mask differs.
     assert np.array_equal(clean.image, dirty.image)
@@ -90,7 +104,9 @@ def test_no_angle_source_has_reason():
 
 @pytest.mark.parametrize("rotation", ROTATIONS)
 def test_warp_preserves_page_aspect(rotation):
-    synth = synthetic_page(rotation=rotation, tilt=12, seed=rotation + 90)
+    synth = synthetic_page(
+        rotation=rotation, tilt=12, seed=rotation + 90, perspective=0.2
+    )
     image, gray, mask, quad, marker = _upright(synth)
     result = page_quad(mask, marker, gray)
     assert result.quad is not None, result.reason

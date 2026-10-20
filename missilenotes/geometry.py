@@ -17,7 +17,6 @@ import numpy as np
 from .marker import Marker
 
 ANGLE_TOL = 6.0  # degrees; line segments this close to the dominant angle are ruled lines
-PCTL = (0.5, 99.5)  # robust page extent in the deskewed frame
 MIN_IOU = 0.5  # below this the quad is not a credible page outline
 
 
@@ -25,9 +24,10 @@ MIN_IOU = 0.5  # below this the quad is not a credible page outline
 class QuadResult:
     """Outcome of :func:`page_quad`.
 
-    ``quad`` is (4, 2) float32 ordered TL/TR/BR/BL, or ``None``. ``reason`` is
-    always human readable and explains a failure; ``confidence`` is the IoU
-    between the quad and the cleaned page mask, in [0, 1].
+    ``quad`` is (4, 2) float32 ordered TL/TR/BR/BL in the page's own axes
+    (page-up, which may be rotated relative to the image), or ``None``.
+    ``reason`` is always human readable and explains a failure; ``confidence``
+    is the IoU between the quad and the cleaned page mask, in [0, 1].
     """
 
     quad: np.ndarray | None
@@ -119,8 +119,15 @@ def warp(img: np.ndarray, quad: np.ndarray) -> np.ndarray:
     """
     q = order_corners(quad)
     tl, tr, br, bl = q
-    width = int(round(max(np.linalg.norm(br - bl), np.linalg.norm(tr - tl))))
-    height = int(round(max(np.linalg.norm(tr - br), np.linalg.norm(tl - bl))))
+    # Under perspective the near edge is longer than the far one; averaging
+    # opposite sides recovers the page's true width/height better than max().
+    width = int(
+        round((np.linalg.norm(tr - tl) + np.linalg.norm(br - bl)) / 2.0)
+    )
+    height = int(
+        round((np.linalg.norm(bl - tl) + np.linalg.norm(br - tr)) / 2.0)
+    )
+    width, height = max(width, 1), max(height, 1)
     dst = np.array(
         [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
         np.float32,
@@ -147,6 +154,10 @@ def page_quad(
     if int(region.sum()) < max(64, int(0.002 * region.size)):
         return QuadResult(None, 0.0, "no page region found in the mask")
 
+    contour = _page_contour(region)
+    if contour is None or len(contour) < 8:
+        return QuadResult(None, 0.0, "page region has no usable outline")
+
     segs = ruled_lines(gray, region)
     theta = None
     source = ""
@@ -162,31 +173,29 @@ def page_quad(
             None, 0.0, "cannot determine page angle: no ruled lines or marker"
         )
 
-    ys, xs = np.nonzero(region)
-    pts = np.column_stack([xs, ys]).astype(np.float64)
-    center = np.array([gray.shape[1] / 2.0, gray.shape[0] / 2.0])
+    # Seed with a four-vertex contour approximation, then fit each side to the
+    # outline points and intersect adjacent lines for sub-pixel corners.
+    quad = _order_by_angle(_initial_quad(contour), theta)
+    outline = contour.reshape(-1, 2).astype(np.float64)
+    refined = _refine_quad(outline, quad)
+    if refined is None:
+        refined = quad
+        source += "; edges not refined"
+    refined = _order_by_angle(refined, theta)
 
-    deskewed = _rotate_about(pts, -theta, center)
-    lo = np.percentile(deskewed, PCTL[0], axis=0)
-    hi = np.percentile(deskewed, PCTL[1], axis=0)
-    if marker is not None:
-        # The marker sits on a page corner: never let the extent cut into it.
-        anchors = _rotate_about(
-            np.asarray(marker.corners, np.float64), -theta, center
-        )
-        lo = np.minimum(lo, anchors.min(axis=0))
-        hi = np.maximum(hi, anchors.max(axis=0))
+    # The marker is stuck on a page corner: expanding that corner (never
+    # shrinking it) keeps the page quad from cutting through the marker.
+    contained = _contain_marker(refined, marker)
+    if contained is None:
+        return QuadResult(None, 0.0, "page quad cannot include the marker")
+    refined = contained
 
-    box = np.array(
-        [[lo[0], lo[1]], [hi[0], lo[1]], [hi[0], hi[1]], [lo[0], hi[1]]]
-    )
-    quad = _rotate_about(box, theta, center).astype(np.float32)
-
-    if not np.isfinite(quad).all() or abs(cv2.contourArea(quad)) < 1.0:
-        return QuadResult(None, 0.0, "page extent is degenerate")
+    area = abs(cv2.contourArea(refined.reshape(-1, 1, 2).astype(np.float32)))
+    if not np.isfinite(refined).all() or area < 1.0:
+        return QuadResult(None, 0.0, "page quad is degenerate")
 
     shape = gray.shape[:2]
-    qmask = quad_mask(quad, shape)
+    qmask = quad_mask(refined, shape)
     union = np.logical_or(qmask, region).sum()
     iou = float(np.logical_and(qmask, region).sum() / union) if union else 0.0
     if iou < MIN_IOU:
@@ -194,14 +203,169 @@ def page_quad(
             None, iou, f"quad disagrees with the page mask (IoU {iou:.2f})"
         )
 
-    return QuadResult(order_corners(quad), iou, f"ok ({source})")
+    return QuadResult(refined.astype(np.float32), iou, f"ok ({source})")
 
 
-def _rotate_about(pts: np.ndarray, deg: float, center: np.ndarray) -> np.ndarray:
-    """Rotate points by ``deg`` mathematically about ``center`` (y-down frame)."""
-    r = np.deg2rad(deg)
-    rot = np.array([[np.cos(r), -np.sin(r)], [np.sin(r), np.cos(r)]])
-    return (np.asarray(pts, np.float64) - center) @ rot.T + center
+def _page_contour(region: np.ndarray) -> np.ndarray | None:
+    """Largest outer contour of the cleaned page region, every boundary pixel."""
+    contours, _ = cv2.findContours(
+        region.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
+    )
+    if not contours:
+        return None
+    return max(contours, key=cv2.contourArea)
+
+
+def _initial_quad(contour: np.ndarray) -> np.ndarray:
+    """Four corner candidates from a convex hull, falling back to minAreaRect."""
+    hull = cv2.convexHull(contour)
+    perimeter = cv2.arcLength(hull, True)
+    for frac in np.linspace(0.005, 0.08, 16):
+        approx = cv2.approxPolyDP(hull, float(frac) * perimeter, True)
+        if len(approx) == 4:
+            return approx.reshape(4, 2).astype(np.float64)
+        if len(approx) < 4:
+            break
+    return cv2.boxPoints(cv2.minAreaRect(hull)).astype(np.float64)
+
+
+def _order_by_angle(quad: np.ndarray, theta: float) -> np.ndarray:
+    """Order corners TL/TR/BR/BL in the page's own axes.
+
+    ``theta`` is the page's horizontal angle, so the sum/diff trick works for
+    any camera rotation instead of only for an axis-aligned page.
+    """
+    r = np.deg2rad(theta)
+    h = np.array([np.cos(r), np.sin(r)])
+    v = np.array([-np.sin(r), np.cos(r)])
+    u = np.asarray(quad, np.float64) @ h
+    w = np.asarray(quad, np.float64) @ v
+    s = u + w
+    d = u - w
+    q = np.asarray(quad, np.float64)
+    return np.array([q[s.argmin()], q[d.argmax()], q[s.argmax()], q[d.argmin()]])
+
+
+def _line_coeffs(line: np.ndarray) -> np.ndarray:
+    """Homogeneous (a, b, c) for a line given as (vx, vy, x0, y0)."""
+    vx, vy, x0, y0 = line
+    return np.array([-vy, vx, vy * x0 - vx * y0], np.float64)
+
+
+def _line_through(a: np.ndarray, b: np.ndarray) -> np.ndarray | None:
+    d = np.asarray(b, np.float64) - np.asarray(a, np.float64)
+    norm = float(np.linalg.norm(d))
+    if norm < 1e-9:
+        return None
+    return np.array([d[0] / norm, d[1] / norm, a[0], a[1]], np.float64)
+
+
+def _intersect_lines(l1: np.ndarray, l2: np.ndarray) -> np.ndarray | None:
+    p = np.cross(_line_coeffs(l1), _line_coeffs(l2))
+    if abs(p[2]) < 1e-9:
+        return None
+    return p[:2] / p[2]
+
+
+def _refine_quad(
+    points: np.ndarray, quad: np.ndarray, iterations: int = 3
+) -> np.ndarray | None:
+    """Robustly fit each side of ``quad`` to ``points`` and re-intersect.
+
+    Points are assigned to the closest side by segment distance, ignoring the
+    corner neighbourhoods so adjacent edges do not steal each other's points.
+    Returns ``None`` if any side is under-determined or the result runs away.
+    """
+    quad = np.asarray(quad, np.float64)
+    diag = float(np.linalg.norm(quad[2] - quad[0]))
+    for _ in range(iterations):
+        # Nearest side per point, using the whole segment so a point is never
+        # handed to a far side just because it is past its own corner.
+        assign = np.full(len(points), -1, np.int32)
+        best = np.full(len(points), np.inf, np.float64)
+        for i in range(4):
+            a, b = quad[i], quad[(i + 1) % 4]
+            seg = b - a
+            length2 = float(seg @ seg)
+            if length2 < 1e-12:
+                return None
+            t = ((points - a) @ seg) / length2
+            inside = (t >= 0.0) & (t <= 1.0)
+            dist = np.linalg.norm(points - (a + t[:, None] * seg), axis=1)
+            better = inside & (dist < best)
+            assign[better] = i
+            best[better] = dist[better]
+
+        lines = []
+        for i in range(4):
+            members = np.nonzero(assign == i)[0]
+            if len(members) >= 6:
+                a, b = quad[i], quad[(i + 1) % 4]
+                seg = b - a
+                t = ((points[members] - a) @ seg) / float(seg @ seg)
+                # Corner neighbourhoods belong to two sides; drop them.
+                members = members[(t >= 0.05) & (t <= 0.95)]
+            side = points[members]
+            if len(side) >= 6:
+                vx, vy, x0, y0 = cv2.fitLine(
+                    side.astype(np.float32), cv2.DIST_HUBER, 0, 0.01, 0.01
+                ).ravel()
+                lines.append(np.array([vx, vy, x0, y0], np.float64))
+            else:
+                line = _line_through(quad[i], quad[(i + 1) % 4])
+                if line is None:
+                    return None
+                lines.append(line)
+
+        corners = []
+        for i in range(4):
+            corner = _intersect_lines(lines[(i - 1) % 4], lines[i])
+            if corner is None:
+                return None
+            corners.append(corner)
+        refined = np.array(corners, np.float64)
+
+        if not np.isfinite(refined).all():
+            return None
+        if not cv2.isContourConvex(refined.reshape(-1, 1, 2).astype(np.float32)):
+            return None
+        if float(np.linalg.norm(refined - quad, axis=1).max()) > 0.1 * diag:
+            return None
+        quad = refined
+    return quad
+
+
+def _contain_marker(
+    quad: np.ndarray, marker: Marker | None
+) -> np.ndarray | None:
+    """Expand the corner nearest the marker until all its corners are inside."""
+    if marker is None:
+        return quad
+    corners = np.asarray(marker.corners, np.float64).reshape(-1, 2)
+    poly = quad.reshape(-1, 1, 2).astype(np.float32)
+    if all(
+        cv2.pointPolygonTest(poly, (float(x), float(y)), False) >= 0
+        for x, y in corners
+    ):
+        return quad
+
+    centre = quad.mean(axis=0)
+    index = int(np.argmin(np.linalg.norm(quad - corners.mean(axis=0), axis=1)))
+    outward = quad[index] - centre
+    if float(np.linalg.norm(outward)) < 1e-9:
+        return None
+    for step in np.linspace(0.0, 1.0, 51):
+        candidate = quad.copy()
+        candidate[index] = quad[index] + outward * step
+        candidate_poly = candidate.reshape(-1, 1, 2).astype(np.float32)
+        if not cv2.isContourConvex(candidate_poly):
+            break
+        if all(
+            cv2.pointPolygonTest(candidate_poly, (float(x), float(y)), False) >= 0
+            for x, y in corners
+        ):
+            return candidate
+    return None
 
 
 def _marker_angle(marker: Marker) -> float:

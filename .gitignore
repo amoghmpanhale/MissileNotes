@@ -17,3 +17,9 @@ experiments/data/*
 experiments/data_png/
 !experiments/data/aruco.png
 !experiments/data/aruco.svg
+
+# Scan and eval outputs — regenerable, never commit them.
+out/
+eval_out/
+*_scan.png
+*_debug.png

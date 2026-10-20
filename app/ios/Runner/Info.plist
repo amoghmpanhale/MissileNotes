@@ -26,6 +26,12 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>MissileNotes uses the camera to photograph a page and its printed marker.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>MissileNotes adds scanned pages to your photo library when you choose Save Image.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>MissileNotes opens your photo library so you can scan a page you already photographed.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

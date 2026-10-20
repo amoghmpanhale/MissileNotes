@@ -1,0 +1,47 @@
+{
+  "index": 1,
+  "photo": "fixture_1_photo.png",
+  "photo_shape": [
+    760,
+    644,
+    3
+  ],
+  "prob_model": "fixture_1_prob_model.png",
+  "model_shape": [
+    644,
+    760
+  ],
+  "expected_scan": "fixture_1_expected.png",
+  "ok": true,
+  "reason": "ok (ruled lines)",
+  "rotation": 0,
+  "quad": [
+    [
+      90.54466247558594,
+      129.80255126953125
+    ],
+    [
+      482.760009765625,
+      86.30730438232422
+    ],
+    [
+      553.9007568359375,
+      611.7664184570312
+    ],
+    [
+      148.45262145996094,
+      667.7238159179688
+    ]
+  ],
+  "confidence": 0.9927179652731339,
+  "scan_shape": [
+    536,
+    402
+  ],
+  "flat_shape": [
+    536,
+    402,
+    3
+  ],
+  "threshold": 0.5
+}

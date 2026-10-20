@@ -1,0 +1,47 @@
+{
+  "index": 5,
+  "photo": "fixture_5_photo.png",
+  "photo_shape": [
+    760,
+    622,
+    3
+  ],
+  "prob_model": "fixture_5_prob_model.png",
+  "model_shape": [
+    622,
+    760
+  ],
+  "expected_scan": "fixture_5_expected.png",
+  "ok": true,
+  "reason": "ok (ruled lines)",
+  "rotation": 0,
+  "quad": [
+    [
+      87.45155334472656,
+      86.33025360107422
+    ],
+    [
+      535.2841796875,
+      127.00216674804688
+    ],
+    [
+      532.6759643554688,
+      601.4306640625
+    ],
+    [
+      183.6478271484375,
+      670.666259765625
+    ]
+  ],
+  "confidence": 0.9933692790674756,
+  "scan_shape": [
+    533,
+    403
+  ],
+  "flat_shape": [
+    533,
+    403,
+    3
+  ],
+  "threshold": 0.5
+}

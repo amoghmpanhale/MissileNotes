@@ -13,9 +13,7 @@ and optional AI cleanup; the only setup should be a printed marker.
 Early, but end-to-end. `missilenotes/` is a tested Python reference package that
 does the whole scan; a mobile app does not exist yet. Everything is verified on
 synthetic pages only — there are no real photos in this repository and no
-real-world accuracy numbers. Platform work is still ahead, and the quad fitting
-step is being generalized to handle handheld keystone (a page photographed as a
-general quadrilateral, not a rough rectangle).
+real-world accuracy numbers. Platform work is still ahead.
 
 ## Pipeline
 
@@ -27,7 +25,7 @@ flowchart TD
     C --> D[Rotate 90° CW into model frame]
     D --> E[FairScan segmentation<br/>256×256 input, logits → sigmoid]
     E --> F[Rotate the mask back upright]
-    F --> G[Fit a 4-corner page quad<br/>model mask + ruled lines + marker anchor,<br/>accepted when it agrees with the mask by IoU]
+    F --> G[Fit a 4-corner page quad<br/>mask contour → convex hull / approxPolyDP,<br/>fitLine per side, intersect for corners,<br/>ordered by ruled lines / marker, IoU-checked]
     G -->|no credible quad| X
     G --> H[Perspective warp]
     H --> I[Adaptive binarization]
@@ -139,10 +137,14 @@ in one frame by rotating coordinates with `rotate_points`; do not re-detect the
 marker after rotating.
 
 **What each stage needs.** Marker: ArUco `DICT_6X6_50` detection. Geometry:
-contours and point-in-polygon, Canny + Hough line segments for the page angle,
-robust percentiles for extent, a perspective transform, and an IoU check against
-the mask. Enhance: a local adaptive threshold plus connected-component speck
-removal. Everything upstream of those primitives is plain numpy.
+clean mask contours, a convex hull plus `approxPolyDP` (with a `minAreaRect`
+fallback) to seed four corners, a robust `fitLine` (`DIST_HUBER`) per side,
+intersecting adjacent lines for sub-pixel corners, Canny + Hough to order the
+corners in page axes, a perspective transform, and an IoU check against the
+mask. The marker can only push its nearest corner outward. Warp output size
+averages opposite sides. Enhance: a local adaptive threshold plus
+connected-component speck removal. Everything upstream of those primitives is
+plain numpy.
 
 Rough CPU timing on synthetic photos in this worktree: about 0.3 s for the
 whole pipeline, of which model inference is about 0.15–0.2 s. No mobile
@@ -162,9 +164,10 @@ coordinates, the CLI/eval output paths, the model tensor contract, and
 PyTorch/TFLite agreement. Tests that need a runtime or the LFS weights skip
 cleanly when those are absent.
 
-What is **not** verified: real photographs, general handheld keystone, different
-papers and inks, low light, motion blur, or on-device performance. There are no
-accuracy claims in this README because there is no real-photo eval set yet.
+What is **not** verified: real photographs, keystone beyond ~20% or real-camera
+lens distortion, different papers and inks, low light, motion blur, or on-device
+performance. There are no accuracy claims in this README because there is no
+real-photo eval set yet.
 
 ## Project layout
 

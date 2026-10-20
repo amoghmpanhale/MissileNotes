@@ -29,6 +29,16 @@ def main(argv: list[str] | None = None) -> int:
     scan_parser.add_argument("-o", "--out", required=True, type=Path)
     scan_parser.add_argument("--weights", type=Path, default=DEFAULT_WEIGHTS)
     scan_parser.add_argument("--no-binarize", action="store_true")
+    scan_parser.add_argument(
+        "--normalize",
+        action="store_true",
+        help="flatten uneven lighting and cast shadows before binarizing",
+    )
+    scan_parser.add_argument(
+        "--remove-rules",
+        action="store_true",
+        help="remove printed ruled/margin lines from the binarized scan",
+    )
     scan_parser.add_argument("--debug", action="store_true")
 
     args = parser.parse_args(argv)
@@ -68,7 +78,13 @@ def _run_scan(args) -> int:
             failed = True
             continue
 
-        result = scan(image, segmenter, binarize_output=not args.no_binarize)
+        result = scan(
+            image,
+            segmenter,
+            binarize_output=not args.no_binarize,
+            normalize=args.normalize,
+            remove_rules=args.remove_rules,
+        )
         total_ms = sum(result.timings.values())
         status = "ok" if result.ok else "FAIL"
         print(

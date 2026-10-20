@@ -37,11 +37,15 @@ def synthetic_page(
     marker_id: int = MARKER_ID,
     with_marker: bool = True,
     contaminate: bool = True,
+    perspective: float | None = None,
 ) -> SyntheticPage:
     """Build one synthetic photo.
 
     ``rotation`` is one of 0/90/180/270 degrees CCW; ``tilt`` is a small extra
     in-plane rotation (degrees) left for the ruled-line refinement to find.
+    ``perspective`` is the approximate keystone, as a fraction of opposite edge
+    length (0.2 gives the ~0.8 ratio of a handheld angled shot). ``None`` keeps
+    the historical, nearly frontal ~3-4% skew.
     """
     if rotation % 90 != 0:
         raise ValueError("rotation must be a multiple of 90")
@@ -52,7 +56,7 @@ def synthetic_page(
         np.float64,
     )
     homography, quad, (width, height) = _placement(
-        PAGE_W, PAGE_H, rotation, tilt, seed
+        PAGE_W, PAGE_H, rotation, tilt, seed, perspective
     )
 
     warped = cv2.warpPerspective(
@@ -143,7 +147,12 @@ def _marker_tile(marker_id: int) -> np.ndarray:
 
 
 def _placement(
-    page_w: int, page_h: int, rotation: int, tilt: float, seed: int
+    page_w: int,
+    page_h: int,
+    rotation: int,
+    tilt: float,
+    seed: int,
+    keystone: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray, tuple[int, int]]:
     """Compose rotation + perspective and fit the result on a canvas."""
     rng = np.random.default_rng(seed + 1000)
@@ -153,11 +162,22 @@ def _placement(
     rot = np.array([[cos, sin, 0], [-sin, cos, 0], [0, 0, 1]], np.float64)
     to_origin = np.array([[1, 0, -cx], [0, 1, -cy], [0, 0, 1]], np.float64)
     from_origin = np.array([[1, 0, cx], [0, 1, cy], [0, 0, 1]], np.float64)
-    px, py = rng.uniform(-1, 1, 2) * 7e-5
+    if keystone is None:
+        px, py = rng.uniform(-1, 1, 2) * 7e-5
+    else:
+        # Both axes converge by ~keystone at full magnitude: the edge ratio is
+        # (1-c)/(1+c) with c = keystone/(2-keystone), so 0.2 -> 0.8.
+        c = keystone / (2.0 - keystone)
+        signs = rng.choice([-1.0, 1.0], size=2)
+        px = signs[0] * 2.0 * c / (page_w - 1)
+        py = signs[1] * 2.0 * c / (page_h - 1)
     perspective = np.array(
         [[1, 0, 0], [0, 1, 0], [px, py, 1]], np.float64
     )
-    homography = from_origin @ perspective @ rot @ to_origin
+    # Keystone belongs to the page (it rotates with it), so apply it before the
+    # in-plane rotation; otherwise the camera rotation would change how much
+    # each page edge converges.
+    homography = from_origin @ rot @ perspective @ to_origin
 
     src = np.array(
         [[0, 0], [page_w - 1, 0], [page_w - 1, page_h - 1], [0, page_h - 1]],

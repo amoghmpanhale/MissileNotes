@@ -24,11 +24,11 @@ TFLite (``.tflite``)
     * Both tensors are plain float32 (no quantization).
 
 The TFLite file pins the input to 256x256, so 256 is the wrapper's input size
-for *both* backends. The older ``experiments/cache_masks.py`` and
-``segment_pages.py`` resize to 512x512, but running the same PyTorch weights
-at 512 produces a materially different mask; at 256 the two backends agree.
-Keeping one shared size is what makes the reference implementation and the
-on-device model interchangeable.
+for *both* backends. The original prototype scripts, now removed, fed
+512x512; running the same PyTorch weights at 512 produces a materially
+different mask, while at 256 the two backends agree. Keeping one shared size
+is what makes the reference implementation and the on-device model
+interchangeable.
 
 Post-processing: sigmoid -> resize (bicubic) back to the input image's
 resolution -> clip to ``[0, 1]``.

@@ -37,16 +37,34 @@ def normalize_illumination(gray: np.ndarray) -> np.ndarray:
     so thin ink is replaced by nearby paper, but it keeps a step edge (a hard
     cast shadow) sharp because the median picks the majority side instead of
     averaging across it. Dividing by that background makes both the lit and
-    shadowed paper white. A blur or a wide morphological kernel would smear
-    the shadow edge into a seam that the divider turns into a false ink band,
-    which is why the edge-preserving median is used.
+    shadowed paper white. A blur or a wide median alone would smear the shadow
+    edge into a seam that the divider turns into a false ink band, hence the
+    edge-preserving median.
+
+    A large solid dark mark (the ArUco marker) is wider than the median window
+    and would be treated as paper, making its interior speckled after
+    division. Before the median, a morphological close fills dark features
+    narrower than the blob kernel (marker modules, pen strokes) with
+    surrounding paper; a cast shadow is much wider than that kernel and stays
+    in the estimate, so it is still divided out.
     """
     gray = np.asarray(gray, np.uint8)
     height, width = gray.shape[:2]
     limit = min(height, width)
-    size = (limit // 10) | 1
-    size = min(max(3, size), 99, limit if limit % 2 else limit - 1)
-    background = cv2.medianBlur(gray, size)
+
+    def _odd(value: int, low: int, high: int) -> int:
+        size = min(max(low, value | 1), high)
+        if size % 2 == 0:
+            size -= 1
+        return min(size, limit if limit % 2 else max(1, limit - 1))
+
+    background_size = _odd(limit // 10, 3, 99)
+    blob_size = _odd(limit // 15, 15, 99)
+    blob_kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (blob_size, blob_size)
+    )
+    background_source = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, blob_kernel)
+    background = cv2.medianBlur(background_source, background_size)
     background = np.maximum(background, 1)
     return cv2.divide(gray, background, scale=255)
 
@@ -60,7 +78,10 @@ def remove_rules(flat_rgb: np.ndarray, binary: np.ndarray) -> np.ndarray:
     keeps dark handwriting that happens to form a long stroke, and keeps pen
     strokes crossing a rule because those pixels are ink-coloured, not
     rule-coloured. A full-width fallback handles faded rules with little
-    colour left, but still refuses to erase very dark (HSV value) pixels.
+    colour left, but still refuses to erase very dark (HSV value) pixels. A
+    second pass then removes short line-shaped leftovers lying wholly inside
+    a detected rule band (jittered dashes, a dotted margin), which a single
+    long-kernel opening misses, while strokes crossing the band survive.
     """
     flat_rgb = np.asarray(flat_rgb, np.uint8)
     binary = np.asarray(binary, np.uint8)
@@ -114,6 +135,53 @@ def remove_rules(flat_rgb: np.ndarray, binary: np.ndarray) -> np.ndarray:
     protected = cv2.dilate(dark_ink, np.ones((3, 3), np.uint8)) > 0
     remove &= ~protected
 
+    # Rule bands: rows/columns carrying many rule-coloured or long-line
+    # pixels. Opening sees only unbroken runs, so a jittered or faded rule can
+    # leave short dashes and a dotted margin; these bands let a second pass
+    # find them.
+    row_rule = (
+        (rule_colour.sum(axis=1) >= 0.25 * width)
+        | (horizontal.sum(axis=1) >= 0.25 * width)
+        | full_row
+    )
+    column_rule = (
+        (rule_colour.sum(axis=0) >= 0.25 * height)
+        | (vertical.sum(axis=0) >= 0.25 * height)
+        | full_column
+    )
+    band_rows = cv2.dilate(
+        row_rule.astype(np.uint8)[:, None], np.ones((5, 1), np.uint8)
+    ).ravel() > 0
+    band_columns = cv2.dilate(
+        column_rule.astype(np.uint8)[None, :], np.ones((1, 5), np.uint8)
+    ).ravel() > 0
+    in_band = band_rows[:, None] | band_columns[None, :]
+
+    # Light rule-coloured pixels inside a band are rule even when broken into
+    # dashes; dark pixels (handwriting) fail this test.
+    remove |= in_band & rule_colour & (value >= 150)
+
     out = binary.copy()
     out[remove] = 255
+
+    # Finally clear small line-shaped components lying wholly inside a rule
+    # band. A handwriting stroke crossing a rule extends outside the band, so
+    # its component is not touched.
+    leftover = 255 - out
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(leftover, 8)
+    max_area = max(64, int(0.004 * height * width))
+    for i in range(1, count):
+        x, y, width_i, height_i, area = stats[i]
+        if area > max_area:
+            continue
+        horizontal_fragment = (
+            height_i <= max(4, int(0.30 * width_i))
+            and band_rows[y : y + height_i].all()
+        )
+        vertical_fragment = (
+            width_i <= max(4, int(0.30 * height_i))
+            and band_columns[x : x + width_i].all()
+        )
+        if horizontal_fragment or vertical_fragment:
+            out[labels == i] = 255
     return out

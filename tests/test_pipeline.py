@@ -146,6 +146,24 @@ def test_normalize_illumination_recovers_hard_cast_shadow():
     assert ink_fraction >= raw_ink - 0.01, (raw_ink, ink_fraction)
 
 
+def test_normalize_illumination_does_not_speckle_the_marker():
+    seed = 7
+    shadowed = synthetic_page(seed=seed, shadow=0.55, annotate=True)
+    plain = synthetic_page(seed=seed, annotate=True)
+    result = scan(
+        shadowed.image, GroundTruthSegmenter(shadowed), normalize=True
+    )
+    reference = scan(plain.image, GroundTruthSegmenter(plain))
+    assert result.ok and reference.ok
+
+    marker = _page_mask_to_flat(
+        shadowed.marker_mask, shadowed, result, seed
+    )
+    assert marker.sum() > 1000
+    agreement = (result.scan[marker] == reference.scan[marker]).mean()
+    assert agreement >= 0.95, agreement
+
+
 def test_remove_rules_keeps_handwriting_even_on_a_rule():
     seed = 7
     synth = synthetic_page(seed=seed, annotate=True)
@@ -167,9 +185,24 @@ def test_remove_rules_keeps_handwriting_even_on_a_rule():
     assert ink_on_rule.sum() > 50, "seed must put handwriting on a rule"
     assert (before.scan[rule_only] == 0).mean() > 0.8, "rules start out ink"
 
-    assert (result.scan[rule_only] == 255).mean() >= 0.90
-    assert (result.scan[ink] == 0).mean() >= 0.90
-    assert (result.scan[ink_on_rule] == 0).mean() >= 0.90
+    assert (result.scan[rule_only] == 255).mean() >= 0.98
+    assert (result.scan[ink] == 0).mean() >= 0.97
+    assert (result.scan[ink_on_rule] == 0).mean() >= 0.97
+
+    # Every surviving dash fragment would be a connected component lying
+    # entirely inside a (slightly widened) ground-truth rule band. Handwriting
+    # crossing a rule extends beyond the band and is not counted.
+    band = cv2.dilate(
+        rules.astype(np.uint8), np.ones((5, 5), np.uint8)
+    ) > 0
+    ink_mask = result.scan == 0
+    count, labels = cv2.connectedComponents(ink_mask.astype(np.uint8), 8)
+    fragments = 0
+    for i in range(1, count):
+        component = labels == i
+        if not np.any(component & ~band):
+            fragments += 1
+    assert fragments <= 5, f"{fragments} leftover components inside rule bands"
 
 
 @pytest.mark.parametrize("rotation,seed", [(0, 3), (90, 4), (180, 5), (270, 6)])

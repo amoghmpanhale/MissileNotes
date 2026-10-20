@@ -1,0 +1,20 @@
+{
+  "index": 6,
+  "photo": "fixture_6_photo.png",
+  "photo_shape": [
+    760,
+    641,
+    3
+  ],
+  "prob_model": null,
+  "model_shape": null,
+  "expected_scan": null,
+  "ok": false,
+  "reason": "no ArUco marker found",
+  "rotation": 0,
+  "quad": null,
+  "confidence": 0.0,
+  "scan_shape": null,
+  "flat_shape": null,
+  "threshold": 0.5
+}

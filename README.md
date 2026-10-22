@@ -315,8 +315,9 @@ old prototype scripts were replaced by `missilenotes/`.
 
 1. **Notebook eval set** — SmartDoc covers printed pages; spiral-notebook
    photos (coil, perforations, page curl) still need their own labelled set.
-2. **Mobile app** — wire the existing Dart pipeline to iOS/Android camera
-   capture, on-device `.tflite` inference, and a scan library UI.
+2. **Mobile app** — capture → on-device scan → share works. Still to do:
+   verify on real iPhone/Android devices, add a scan library (save, browse,
+   re-share), and ship store builds.
 3. **Cloud sync** — upload scans and keep a searchable library across devices.
 4. **AI cleanup** — optional handwriting/ink cleanup and background removal on
    top of the geometric scan.

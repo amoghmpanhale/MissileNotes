@@ -6,6 +6,8 @@ import 'marker.dart';
 import 'types.dart';
 
 const double angleTolerance = 6.0;
+// Degrees: how far ruled lines may move the marker/image-axes page angle.
+const double ruleAgreeTolerance = 20.0;
 const double minIou = 0.5;
 
 /// Outcome of [pageQuad].  `quad` is TL/TR/BR/BL in the page's own axes, or
@@ -65,16 +67,9 @@ cv.Mat cleanMask(cv.Mat mask, [Marker? marker]) {
 
     final filled = cv.Mat.zeros(mask.rows, mask.cols, cv.MatType.CV_8UC1);
     final contour = contours[chosen!];
-    final polygons =
-        cv.VecVecPoint.generate(1, (_) => contour, dispose: false);
+    final polygons = cv.VecVecPoint.generate(1, (_) => contour, dispose: false);
     try {
-      cv.drawContours(
-        filled,
-        polygons,
-        -1,
-        cv.Scalar(1),
-        thickness: cv.FILLED,
-      );
+      cv.drawContours(filled, polygons, -1, cv.Scalar(1), thickness: cv.FILLED);
     } finally {
       polygons.dispose();
     }
@@ -119,8 +114,10 @@ List<List<double>> ruledLines(cv.Mat gray, cv.Mat region) {
     );
     try {
       if (lines.rows == 0) return const [];
-      final ints = lines.data.buffer
-          .asInt32List(lines.data.offsetInBytes, lines.rows * 4);
+      final ints = lines.data.buffer.asInt32List(
+        lines.data.offsetInBytes,
+        lines.rows * 4,
+      );
       return [
         for (var i = 0; i < lines.rows; i++)
           [
@@ -143,9 +140,7 @@ List<List<double>> ruledLines(cv.Mat gray, cv.Mat region) {
 (double, int) dominantAngle(List<List<double>> segments) {
   final angles = [
     for (final s in segments)
-      _foldDegrees(
-        math.atan2(s[3] - s[1], s[2] - s[0]) * 180.0 / math.pi,
-      ),
+      _foldDegrees(math.atan2(s[3] - s[1], s[2] - s[0]) * 180.0 / math.pi),
   ];
 
   final histogram = List<int>.filled(36, 0);
@@ -189,15 +184,11 @@ cv.Mat warp(cv.Mat image, List<Pt> quad) {
 
   final width = math.max(
     1,
-    roundHalfEven(
-      (Pt.distance(tr, tl) + Pt.distance(br, bl)) / 2.0,
-    ),
+    roundHalfEven((Pt.distance(tr, tl) + Pt.distance(br, bl)) / 2.0),
   );
   final height = math.max(
     1,
-    roundHalfEven(
-      (Pt.distance(bl, tl) + Pt.distance(br, tr)) / 2.0,
-    ),
+    roundHalfEven((Pt.distance(bl, tl) + Pt.distance(br, tr)) / 2.0),
   );
 
   final dst = [
@@ -244,26 +235,27 @@ QuadResult pageQuad(cv.Mat mask, Marker? marker, cv.Mat gray) {
       return const QuadResult(null, 0.0, 'page region has no usable outline');
     }
 
+    // The marker gives a coarse page angle; ruled lines may only refine it.
+    // Hough also finds phantom diagonals through tables and text grids, and a
+    // 45-degree theta makes corner ordering collapse. No marker means the
+    // caller already rotated the frame upright, so the image axes are the
+    // reference.
+    final refName = marker != null ? 'marker orientation' : 'image axes';
+    var theta = marker != null ? _markerAngle(marker) : 0.0;
+    var source = '$refName (no ruled lines)';
     final segments = ruledLines(gray, region);
-    double? theta;
-    var source = '';
     if (segments.length >= 3) {
       final (candidate, kept) = dominantAngle(segments);
       if (kept >= 3) {
-        theta = candidate;
-        source = 'ruled lines';
+        // Rules may be horizontal or vertical; compare modulo 90 degrees.
+        final offset = (candidate - theta + 45.0) % 90.0 - 45.0;
+        if (offset.abs() <= ruleAgreeTolerance) {
+          theta += offset;
+          source = 'ruled lines';
+        } else {
+          source = '$refName (ruled lines disagree)';
+        }
       }
-    }
-    if (theta == null && marker != null) {
-      theta = _markerAngle(marker);
-      source = 'marker orientation (no ruled lines)';
-    }
-    if (theta == null) {
-      return const QuadResult(
-        null,
-        0.0,
-        'cannot determine page angle: no ruled lines or marker',
-      );
     }
 
     var quad = _orderByAngle(_initialQuad(contour), theta);
@@ -303,7 +295,7 @@ QuadResult pageQuad(cv.Mat mask, Marker? marker, cv.Mat gray) {
           null,
           iou,
           'quad disagrees with the page mask '
-              '(IoU ${iou.toStringAsFixed(2)})',
+          '(IoU ${iou.toStringAsFixed(2)})',
         );
       }
       return QuadResult(quad, iou, 'ok ($source)');
@@ -476,16 +468,12 @@ List<Pt>? _refineQuad(List<Pt> points, List<Pt> quad, {int iterations = 3}) {
 
       if (members.length >= 6) {
         final side = _vecPoint2f([for (final p in members) points[p]]);
-        final fitted = cv.fitLine2f(
-          side,
-          cv.DIST_HUBER,
-          0,
-          0.01,
-          0.01,
-        );
+        final fitted = cv.fitLine2f(side, cv.DIST_HUBER, 0, 0.01, 0.01);
         try {
-          final values = fitted.data.buffer
-              .asFloat32List(fitted.data.offsetInBytes, fitted.total);
+          final values = fitted.data.buffer.asFloat32List(
+            fitted.data.offsetInBytes,
+            fitted.total,
+          );
           lines.add([
             values[0].toDouble(),
             values[1].toDouble(),
@@ -563,11 +551,7 @@ bool _allInside(List<Pt> quad, List<Pt> points) {
   final polygon = _vecPoint2f(quad);
   try {
     for (final point in points) {
-      if (cv.pointPolygonTest2f(
-            polygon,
-            cv.Point2f(point.x, point.y),
-            false,
-          ) <
+      if (cv.pointPolygonTest2f(polygon, cv.Point2f(point.x, point.y), false) <
           0) {
         return false;
       }
@@ -632,14 +616,14 @@ int _argMax(List<double> values) {
 }
 
 cv.VecPoint _vecPoint(List<Pt> points) => cv.VecPoint.generate(
-      points.length,
-      (i) => cv.Point(points[i].x.toInt(), points[i].y.toInt()),
-    );
+  points.length,
+  (i) => cv.Point(points[i].x.toInt(), points[i].y.toInt()),
+);
 
 cv.VecPoint2f _vecPoint2f(List<Pt> points) => cv.VecPoint2f.generate(
-      points.length,
-      (i) => cv.Point2f(points[i].x, points[i].y),
-    );
+  points.length,
+  (i) => cv.Point2f(points[i].x, points[i].y),
+);
 
 List<Pt> _fromVecPoint(cv.VecPoint points) {
   final result = <Pt>[];

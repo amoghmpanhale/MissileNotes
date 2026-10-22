@@ -15,9 +15,11 @@ and optional AI cleanup; the only setup should be a printed marker.
 
 Early, but end-to-end. `missilenotes/` is a tested Python reference package that
 does the whole scan. `app/` is the Flutter iOS + Android project with a Dart
-port of the pipeline and parity fixtures; its camera/capture UI is still the
-Flutter scaffold. Everything is verified on synthetic pages and fixtures only —
-there are no real photos in this repository and no real-world accuracy numbers.
+port of the pipeline and parity fixtures, plus a capture flow: take or pick a
+photo, scan it on-device, view the result, and share it. It has not yet been
+run on a physical phone. Page detection is benchmarked on real phone frames from
+the public SmartDoc dataset (see [Benchmark](#benchmark)); there are no real
+notebook photos in this repository yet.
 
 ## Pipeline
 
@@ -38,6 +40,78 @@ flowchart TD
 
 The marker is required. If it is missing, the pipeline stops before running the
 model rather than guessing at a page.
+
+## Benchmark
+
+Page detection is scored on [ICDAR'15 SmartDoc Challenge 1](https://github.com/jchazalon/smartdoc15-ch1-dataset):
+24,889 phone-video frames of 30 printed documents on 5 backgrounds, each with
+ground-truth page corners. The metric is the competition's Jaccard index (JI),
+computed in each document's own reference frame; a failed scan scores 0.
+Every 10th frame is used (2,555 frames).
+
+SmartDoc has no ArUco marker, so two modes run on the same frames:
+
+- **No marker** — `scan(rotation=...)` takes the upright rotation from the
+  ground truth (the only thing the marker normally supplies); the page quad
+  comes from segmentation and geometry alone.
+- **Composited marker** — a real `DICT_6X6_50` marker (30 mm, upside-down) is
+  warped onto the page's top-right corner with the ground-truth homography and
+  the unmodified pipeline runs. A pasted marker is sharper than a printed one,
+  so this mode is optimistic about detection.
+
+| mode | mean JI | median JI | failed | bg 1 | bg 2 | bg 3 | bg 4 | bg 5 |
+|---|---|---|---|---|---|---|---|---|
+| no marker | 0.905 | 0.972 | 1.8% | 0.964 | 0.967 | 0.926 | 0.966 | 0.478 |
+| composited marker | 0.897 | 0.971 | 4.3% | 0.962 | 0.961 | 0.928 | 0.961 | 0.429 |
+
+Published results for reference (Table III of
+[Tropin et al. 2020](https://arxiv.org/abs/2008.02615), full frame set):
+
+| method | bg 1 | bg 2 | bg 3 | bg 4 | bg 5 | all |
+|---|---|---|---|---|---|---|
+| JCD+CSR | 0.988 | 0.984 | 0.983 | 0.984 | 0.961 | 0.982 |
+| LRDE-3 | 0.985 | 0.982 | 0.987 | 0.980 | 0.848 | 0.970 |
+| Smart Engines | 0.989 | 0.983 | 0.990 | 0.979 | 0.688 | 0.955 |
+| GOP | 0.961 | 0.944 | 0.965 | 0.930 | 0.412 | 0.896 |
+| SmartDoc competition average | 0.947 | 0.903 | 0.938 | 0.812 | 0.404 | 0.855 |
+
+What the numbers say:
+
+- On backgrounds 1, 2 and 4 the mean JI (0.964–0.967) is within 0.025 of the
+  best published method, using a general-purpose 256×256 segmentation model
+  with no SmartDoc-specific training. Typical frames are better than the
+  mean: the overall median is 0.972.
+- Background 5 (cables, pens and a highlighter across the page, other sheets
+  stacked beneath it) is the weak spot, as it is for most published methods.
+- Most remaining failures are the model merging a pale desk with the page, or
+  choosing a glare patch over the page on background 3 (the green outline in
+  the sheet below). With a marker the pipeline keeps the mask island under the
+  marker, which is why the marker mode wins on background 3.
+- The benchmark found a real bug. Hough also detects phantom 45° diagonals
+  through tables and forms, and those could override the marker's page angle,
+  which collapses corner ordering. Ruled lines may now only refine the marker
+  (or image-axes) angle by up to 20°. Before that fix the composited-marker
+  mode scored 0.837 mean JI with 10.6% failed scans; the no-marker mode
+  scored 0.873.
+
+![SmartDoc worst, median and best frames: ground truth blue, detection green](docs/smartdoc_contact_sheet.jpg)
+
+Reproduce (about 1 GB download, ~13 minutes on 3 CPU cores):
+
+```bash
+.venv/bin/python scripts/smartdoc.py fetch
+.venv/bin/python scripts/smartdoc.py run --step 10 -o eval_out/smartdoc
+```
+
+`run` writes `results.csv` (per frame and mode), `summary.md` (by background,
+document type and failure reason) and a contact sheet per mode. SmartDoc is
+printed pages lying flat, not spiral-notebook pages, so it measures page
+detection, not notebook-specific behaviour. It is used as a held-out test set:
+nothing is tuned against it.
+
+SmartDoc is CC BY 4.0: Burie et al., "ICDAR2015 Competition on Smartphone
+Document Capture and OCR (SmartDoc)", ICDAR 2015. The contact sheet above is
+derived from its frames.
 
 ## Quickstart
 
@@ -110,6 +184,10 @@ fitted `quad` in original-photo coordinates, the `rotation` it applied, a
 `confidence` (quad/mask IoU), and per-stage `timings`. The caller injects the
 segmenter, so tests and other backends can supply anything with
 `predict(img_rgb) -> HxW probability`.
+
+`scan(..., rotation=deg)` skips marker detection and uses that CCW rotation
+(a multiple of 90) instead. It exists for marker-free benchmarks; the default
+keeps the marker required.
 
 ## Editor for bad scans
 
@@ -246,11 +324,11 @@ old prototype scripts were replaced by `missilenotes/`.
 
 ## Roadmap
 
-1. **Real-photo eval set** — collect marked notebook photos, label page
-   corners, and measure geometry and scan quality instead of relying on
-   synthetic pages.
-2. **Mobile app** — wire the existing Dart pipeline to iOS/Android camera
-   capture, on-device `.tflite` inference, and a scan library UI.
+1. **Notebook eval set** — SmartDoc covers printed pages; spiral-notebook
+   photos (coil, perforations, page curl) still need their own labelled set.
+2. **Mobile app** — capture → on-device scan → share works. Still to do:
+   verify on real iPhone/Android devices, add a scan library (save, browse,
+   re-share), and ship store builds.
 3. **Cloud sync** — upload scans and keep a searchable library across devices.
 4. **AI cleanup** — optional handwriting/ink cleanup and background removal on
    top of the geometric scan.

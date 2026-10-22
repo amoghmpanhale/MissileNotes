@@ -262,3 +262,24 @@ def test_real_tflite_smoke():
 
     assert isinstance(result, ScanResult)
     assert result.timings["predict"] > 0.0
+
+
+@pytest.mark.parametrize("rotation", ROTATIONS)
+def test_given_rotation_scans_without_a_marker(rotation):
+    synth = synthetic_page(rotation=rotation, seed=rotation + 3, with_marker=False)
+    upright = (360 - rotation) % 360
+    result = scan(synth.image, GroundTruthSegmenter(synth), rotation=upright)
+
+    assert result.ok, result.reason
+    assert result.rotation == upright
+    assert "marker" not in result.timings
+    actual = order_corners(result.quad)
+    expected = order_corners(synth.quad)
+    diagonal = float(np.linalg.norm(expected[0] - expected[2]))
+    assert float(np.linalg.norm(actual - expected, axis=1).max()) <= 0.02 * diagonal
+
+
+def test_given_rotation_must_be_a_quarter_turn():
+    synth = synthetic_page(with_marker=False)
+    with pytest.raises(ValueError):
+        scan(synth.image, ExplodingSegmenter(), rotation=45)

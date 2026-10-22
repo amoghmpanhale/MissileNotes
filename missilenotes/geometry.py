@@ -17,6 +17,8 @@ import numpy as np
 from .marker import Marker
 
 ANGLE_TOL = 6.0  # degrees; line segments this close to the dominant angle are ruled lines
+# degrees; how far ruled lines may move the marker/image-axes page angle
+RULE_AGREE_TOL = 20.0
 MIN_IOU = 0.5  # below this the quad is not a credible page outline
 
 
@@ -158,20 +160,26 @@ def page_quad(
     if contour is None or len(contour) < 8:
         return QuadResult(None, 0.0, "page region has no usable outline")
 
+    # The marker gives a coarse page angle; ruled lines may only refine it.
+    # Hough also finds phantom diagonals through tables and text grids, and a
+    # 45-degree theta makes corner ordering collapse. No marker means the
+    # caller already rotated the frame upright (scan's rotation=), so the
+    # image axes are the reference.
+    if marker is not None:
+        theta, ref_name = _marker_angle(marker), "marker orientation"
+    else:
+        theta, ref_name = 0.0, "image axes"
+    source = f"{ref_name} (no ruled lines)"
     segs = ruled_lines(gray, region)
-    theta = None
-    source = ""
     if len(segs) >= 3:
         candidate, keep = dominant_angle(segs)
         if int(keep.sum()) >= 3:
-            theta, source = candidate, "ruled lines"
-    if theta is None and marker is not None:
-        theta = _marker_angle(marker)
-        source = "marker orientation (no ruled lines)"
-    if theta is None:
-        return QuadResult(
-            None, 0.0, "cannot determine page angle: no ruled lines or marker"
-        )
+            # Rules may be horizontal or vertical; compare modulo 90 degrees.
+            offset = (candidate - theta + 45.0) % 90.0 - 45.0
+            if abs(offset) <= RULE_AGREE_TOL:
+                theta, source = theta + offset, "ruled lines"
+            else:
+                source = f"{ref_name} (ruled lines disagree)"
 
     # Seed with a four-vertex contour approximation, then fit each side to the
     # outline points and intersect adjacent lines for sub-pixel corners.

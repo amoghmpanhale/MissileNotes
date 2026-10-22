@@ -70,6 +70,7 @@ def scan(
     binarize_output: bool = True,
     normalize: bool = False,
     remove_rules: bool = False,
+    rotation: int | None = None,
 ) -> ScanResult:
     """Scan one RGB photo. Never raises for a bad photo.
 
@@ -81,26 +82,38 @@ def scan(
     ``remove_rules`` clears printed ruled/margin lines after binarizing; it is
     ignored when ``binarize_output`` is false. Both default to off so the
     default output matches the historical pipeline exactly.
+
+    ``rotation`` (CCW degrees, a multiple of 90) skips marker detection and
+    uses that rotation instead; geometry then runs without a marker. It exists
+    for benchmarks on marker-free datasets, where orientation comes from the
+    ground truth. The default keeps the marker required.
     """
     img_rgb = _validate(img_rgb)
     timings: dict[str, float] = {}
 
-    start = time.perf_counter()
-    gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
-    marker = detect_marker(gray)
-    timings["marker"] = _elapsed_ms(start)
+    if rotation is None:
+        start = time.perf_counter()
+        gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+        marker = detect_marker(gray)
+        timings["marker"] = _elapsed_ms(start)
 
-    if marker is None:
-        return ScanResult(
-            False, "no ArUco marker found", None, None, None, 0, 0.0, timings
+        if marker is None:
+            return ScanResult(
+                False, "no ArUco marker found", None, None, None, 0, 0.0,
+                timings,
+            )
+
+        rotation = upright_rotation(marker)
+        upright_marker = Marker(
+            corners=rotate_points(marker.corners, rotation, img_rgb.shape),
+            id=marker.id,
         )
-
-    rotation = upright_rotation(marker)
+    else:
+        if rotation % 90:
+            raise ValueError(f"rotation must be a multiple of 90, got {rotation}")
+        rotation %= 360
+        upright_marker = None
     upright = rotate_image(img_rgb, rotation)
-    upright_marker = Marker(
-        corners=rotate_points(marker.corners, rotation, img_rgb.shape),
-        id=marker.id,
-    )
     upright_gray = cv2.cvtColor(upright, cv2.COLOR_RGB2GRAY)
 
     # The horizontal model expects the page turned 90 degrees clockwise from

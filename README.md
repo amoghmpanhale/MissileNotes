@@ -143,10 +143,21 @@ flutter test --concurrency=1
 ```
 
 On Linux one test is skipped by design: `flutter_tester` has no host TFLite
-library, so the real-model parity test cannot load LiteRT. To run on an iPhone
-from a Mac, connect the device and run `cd app && flutter run`. Building for a
-physical device needs code signing: open `app/ios/Runner.xcworkspace` in Xcode
-and add your Apple ID/team under Signing & Capabilities.
+library, so the real-model parity test cannot load LiteRT.
+
+To run on an iPhone (iOS 15+) from a Mac you need full Xcode (not just the
+Command Line Tools), CocoaPods, CMake (`brew install cocoapods cmake`), and Git
+LFS so the `.tflite` asset is real. Building for a physical device needs code
+signing: open `app/ios/Runner.xcworkspace` in Xcode and add your Apple ID/team
+under Signing & Capabilities. Then connect the device and run
+`cd app && flutter run --release`. The first build compiles OpenCV from source
+and takes a while.
+
+`app/third_party/dartcv4/` is dartcv4 2.2.2 with its iOS deployment target
+raised from 12.0 to 15.0, which newer Xcode requires. Remove it and the
+`dependency_overrides` entry once the Flutter SDK allows dartcv4 2.3.1+. If a
+build still reports the 12.0 target, run `flutter clean` to drop the cached
+OpenCV build.
 
 ## Mobile port contract
 

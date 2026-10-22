@@ -66,6 +66,14 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
 
+# dartcv4 2.2.2 hard-codes an iOS 12.0 deployment target for its OpenCV build,
+# which newer Xcode rejects (minimum 15.0). 2.3.1 fixes it but needs
+# meta ^1.19.0, which Flutter 3.47.7 pins below. Until Flutter allows it, use
+# a copy of 2.2.2 with the target raised to 15.0; drop this override then.
+dependency_overrides:
+  dartcv4:
+    path: third_party/dartcv4
+
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 

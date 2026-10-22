@@ -98,12 +98,11 @@ packages:
     source: hosted
     version: "1.0.9"
   dartcv4:
-    dependency: transitive
+    dependency: "direct overridden"
     description:
-      name: dartcv4
-      sha256: b2be1fd93df688079745b71601b3c959d8405a33ad72dcf8d892ec324318b9c1
-      url: "https://pub.dev"
-    source: hosted
+      path: "third_party/dartcv4"
+      relative: true
+    source: path
     version: "2.2.2"
   fake_async:
     dependency: transitive

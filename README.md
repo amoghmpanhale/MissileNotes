@@ -221,10 +221,21 @@ flutter test --concurrency=1
 ```
 
 On Linux one test is skipped by design: `flutter_tester` has no host TFLite
-library, so the real-model parity test cannot load LiteRT. To run on an iPhone
-from a Mac, connect the device and run `cd app && flutter run`. Building for a
-physical device needs code signing: open `app/ios/Runner.xcworkspace` in Xcode
-and add your Apple ID/team under Signing & Capabilities.
+library, so the real-model parity test cannot load LiteRT.
+
+To run on an iPhone (iOS 15+) from a Mac you need full Xcode (not just the
+Command Line Tools), CocoaPods, CMake (`brew install cocoapods cmake`), and Git
+LFS so the `.tflite` asset is real. Building for a physical device needs code
+signing: open `app/ios/Runner.xcworkspace` in Xcode and add your Apple ID/team
+under Signing & Capabilities. Then connect the device and run
+`cd app && flutter run --release`. The first build compiles OpenCV from source
+and takes a while.
+
+`app/third_party/dartcv4/` is dartcv4 2.2.2 with its iOS deployment target
+raised from 12.0 to 15.0, which newer Xcode requires. Remove it and the
+`dependency_overrides` entry once the Flutter SDK allows dartcv4 2.3.1+. If a
+build still reports the 12.0 target, run `flutter clean` to drop the cached
+OpenCV build.
 
 ## Mobile port contract
 
@@ -318,8 +329,12 @@ old prototype scripts were replaced by `missilenotes/`.
 2. **Mobile app** — capture → on-device scan → share works. Still to do:
    verify on real iPhone/Android devices, add a scan library (save, browse,
    re-share), and ship store builds.
-3. **Cloud sync** — upload scans and keep a searchable library across devices.
-4. **AI cleanup** — optional handwriting/ink cleanup and background removal on
+3. **Scan controls** — a toggle to choose marker or no-marker scanning before
+   a scan, and draggable corners on the detected page outline so a bad quad
+   can be fixed and re-warped on the phone (the on-device counterpart of
+   `tools/warp_editor.py`).
+4. **Cloud sync** — upload scans and keep a searchable library across devices.
+5. **AI cleanup** — optional handwriting/ink cleanup and background removal on
    top of the geometric scan.
 
 ## License

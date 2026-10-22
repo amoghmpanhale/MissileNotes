@@ -329,8 +329,12 @@ old prototype scripts were replaced by `missilenotes/`.
 2. **Mobile app** — capture → on-device scan → share works. Still to do:
    verify on real iPhone/Android devices, add a scan library (save, browse,
    re-share), and ship store builds.
-3. **Cloud sync** — upload scans and keep a searchable library across devices.
-4. **AI cleanup** — optional handwriting/ink cleanup and background removal on
+3. **Scan controls** — a toggle to choose marker or no-marker scanning before
+   a scan, and draggable corners on the detected page outline so a bad quad
+   can be fixed and re-warped on the phone (the on-device counterpart of
+   `tools/warp_editor.py`).
+4. **Cloud sync** — upload scans and keep a searchable library across devices.
+5. **AI cleanup** — optional handwriting/ink cleanup and background removal on
    top of the geometric scan.
 
 ## License

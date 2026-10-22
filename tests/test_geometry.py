@@ -92,14 +92,17 @@ def test_no_page_region_has_reason():
     assert "no page region" in result.reason
 
 
-def test_no_angle_source_has_reason():
+def test_no_angle_source_falls_back_to_image_axes():
     gray = np.full((300, 300), 255, np.uint8)  # no ruled lines, no marker
     mask = np.zeros_like(gray, bool)
     mask[50:250, 60:240] = True
 
     result = page_quad(mask, None, gray)
-    assert result.quad is None
-    assert "angle" in result.reason
+    assert result.quad is not None
+    assert "image axes" in result.reason
+    np.testing.assert_allclose(
+        result.quad, [[60, 50], [239, 50], [239, 249], [60, 249]], atol=1.5
+    )
 
 
 @pytest.mark.parametrize("rotation", ROTATIONS)
@@ -114,3 +117,26 @@ def test_warp_preserves_page_aspect(rotation):
     flat = warp(image, result.quad)
     expected = PAGE_W / PAGE_H
     assert abs((flat.shape[1] / flat.shape[0]) / expected - 1.0) <= 0.03
+
+
+def test_phantom_diagonals_cannot_override_the_marker_angle():
+    # Hough finds long 45-degree "lines" through table grids; they used to win
+    # the angle vote and collapse the corner ordering into a degenerate quad.
+    gray = np.full((400, 400), 255, np.uint8)
+    mask = np.zeros_like(gray, bool)
+    mask[40:360, 80:320] = True
+    for k in range(-200, 201, 12):
+        cv2.line(gray, (80, 40 + k), (320, 280 + k), 0, 1)
+    gray[~mask] = 120
+    # Upside-down marker in the top-right corner: page-up is marker-down.
+    marker = Marker(
+        corners=np.array([[300, 90], [250, 90], [250, 50], [300, 50]], np.float32),
+        id=7,
+    )
+
+    result = page_quad(mask, marker, gray)
+    assert result.quad is not None, result.reason
+    assert "disagree" in result.reason
+    np.testing.assert_allclose(
+        result.quad, [[80, 40], [319, 40], [319, 359], [80, 359]], atol=2
+    )

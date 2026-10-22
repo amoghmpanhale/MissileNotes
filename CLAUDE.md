@@ -5,16 +5,27 @@ ArUco marker, sticks it on a page corner, and photographs the page; the app
 finds, flattens, cleans, and cloud-saves the scan. End goal: on-device
 scanning + cloud sync + AI cleanup, setup being just a printed marker.
 
-**Today there is no app** — only `missilenotes/`, a tested Python reference
-package that the mobile app will port, plus a Tk hand-correction editor.
+`missilenotes/` is the tested Python reference pipeline; `app/` is the Flutter
+app with a Dart port of it (core scan path only — `normalize`/`remove_rules`
+are Python-only). The Python package is the source of truth: change behavior
+there first, then port and refresh the parity fixtures.
 
 ## Layout
+
+- `app/` — Flutter iOS + Android app. `lib/pipeline/` is the Dart port;
+  `lib/scan_service.dart` runs scans on a worker isolate; `home_screen.dart` /
+  `result_screen.dart` are capture → scan → share. `test/fixtures/` holds
+  parity fixtures from `scripts/export_fixtures.py`. Test with
+  `flutter test --concurrency=1` (the real-model test skips on Linux).
 
 - `missilenotes/` — the reference pipeline: `marker.py` (ArUco + rotation),
   `geometry.py` (mask → page quad → warp), `enhance.py` (binarize),
   `segment.py` (`.pt`/`.tflite` segmenter), `pipeline.py` (`scan`),
   `__main__.py` (CLI).
 - `scripts/eval.py` — folder eval: `results.csv` + `contact_sheet.png`.
+- `scripts/smartdoc.py` — ICDAR'15 SmartDoc benchmark (`fetch`, `run`); data
+  lands in gitignored `experiments/data/smartdoc/`, reports in `eval_out/`.
+  It's a test set: never tune parameters against it.
 - `tools/warp_editor.py` — Tk editor for scans the pipeline got wrong.
 - `tests/` — pytest suite; `tests/synth.py` generates synthetic pages.
 - `experiments/model/`, `experiments/model_horizontal/` — FairScan weights

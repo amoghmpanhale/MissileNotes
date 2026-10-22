@@ -59,18 +59,12 @@ void main() {
         pixels[row * width + col] = 1;
       }
     }
-    final mask =
-        cv.Mat.fromList(height, width, cv.MatType.CV_8UC1, pixels);
+    final mask = cv.Mat.fromList(height, width, cv.MatType.CV_8UC1, pixels);
 
     final largest = cleanMask(mask);
     final withMarker = cleanMask(
       mask,
-      const Marker([
-        Pt(40, 90),
-        Pt(60, 90),
-        Pt(60, 110),
-        Pt(40, 110),
-      ], 7),
+      const Marker([Pt(40, 90), Pt(60, 90), Pt(60, 110), Pt(40, 110)], 7),
     );
     try {
       expect(_count(largest), 14400);
@@ -101,7 +95,7 @@ void main() {
     }
   });
 
-  test('pageQuad explains a missing angle source', () {
+  test('pageQuad falls back to image axes without rules or marker', () {
     final gray = cv.Mat.fromScalar(
       300,
       300,
@@ -117,8 +111,17 @@ void main() {
     }
     try {
       final result = pageQuad(mask, null, gray);
-      expect(result.quad, isNull);
-      expect(result.reason, contains('angle'));
+      expect(result.reason, contains('image axes'));
+      const expected = [
+        (60.0, 50.0),
+        (239.0, 50.0),
+        (239.0, 249.0),
+        (60.0, 249.0),
+      ];
+      for (var i = 0; i < 4; i++) {
+        expect(result.quad![i].x, closeTo(expected[i].$1, 1.5));
+        expect(result.quad![i].y, closeTo(expected[i].$2, 1.5));
+      }
     } finally {
       gray.dispose();
       mask.dispose();
